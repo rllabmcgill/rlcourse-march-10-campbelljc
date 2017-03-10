@@ -121,6 +121,9 @@ class ReinforcementAgent(ValueEstimationAgent):
         """
         return self.actionFn(state)
 
+    def getLegalOptions(self, state):
+        return self.optionFn(state)
+
     def observeTransition(self, state,action,nextState,deltaReward, update_vals):
         """
             Called by environment to inform agent that a transition has
@@ -160,7 +163,7 @@ class ReinforcementAgent(ValueEstimationAgent):
     #def isInTesting(self):
     #    return not self.isInTraining()
 
-    def __init__(self, actionFn = None, epsilon=0.5, alpha=0.5, gamma=1):
+    def __init__(self, actionFn = None, optionFn = None, epsilon=0.5, alpha=0.5, gamma=1):
         """
         actionFn: Function which takes a state and returns the list of legal actions
 
@@ -172,6 +175,7 @@ class ReinforcementAgent(ValueEstimationAgent):
         if actionFn == None:
             actionFn = lambda state: state.getLegalActions()
         self.actionFn = actionFn
+        self.optionFn = optionFn
         self.episodesSoFar = 0
         self.accumTrainRewards = 0.0
         self.accumTestRewards = 0.0
@@ -179,6 +183,7 @@ class ReinforcementAgent(ValueEstimationAgent):
         self.epsilon = float(epsilon)
         self.alpha = float(alpha)
         self.discount = float(gamma)
+        self.n_step = False
 
     ################################
     # Controls needed for Crawler  #

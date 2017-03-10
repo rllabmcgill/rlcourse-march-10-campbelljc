@@ -13,7 +13,7 @@
 
 
 import random
-import sys
+import sys, time
 import mdp
 import environment
 import util
@@ -25,7 +25,7 @@ class Gridworld(mdp.MarkovDecisionProcess):
     """
       Gridworld
     """
-    def __init__(self, grid):
+    def __init__(self, grid, options=[], reward_means=None):
         # layout
         if type(grid) == type([]): grid = makeGrid(grid)
         self.grid = grid
@@ -52,6 +52,8 @@ class Gridworld(mdp.MarkovDecisionProcess):
         # parameters
         self.livingReward = 0.0
         self.noise = 0.2
+        self.options = options
+        self.reward_means = reward_means
 
     def setLivingReward(self, reward):
         """
@@ -83,7 +85,31 @@ class Gridworld(mdp.MarkovDecisionProcess):
         if type(self.grid[x][y]) == int:
             return ('exit',)
         return ('north','west','south','east')
-
+    
+    def getPossibleOptions(self, state):
+        if state == self.grid.terminalState:
+            return ()
+        x,y = state
+        if type(self.grid[x][y]) == int:
+            return [Option(policyFn=lambda state: 'exit',
+                            terminationFn=lambda state: True,
+                            initiationSet=[(x, y)],
+                            primitive=True, primitiveName='exit')]
+        return [option for option in self.options if state in option.initiationSet]
+    
+    def getTerminalOption(self):
+        terminal_opts = []
+        for state in self.getStates():
+            if state == self.grid.terminalState:
+                continue
+            x, y = state
+            if type(self.grid[x][y]) == int:
+                terminal_opts.append(Option(policyFn=lambda state: 'exit',
+                                            terminationFn=lambda state: True,
+                                            initiationSet=[(x, y)],
+                                            primitive=True, primitiveName='exit'))
+        return terminal_opts
+    
     def getStates(self):
         """
         Return list of all states.
@@ -111,12 +137,18 @@ class Gridworld(mdp.MarkovDecisionProcess):
         cell = self.grid[x][y]
         if type(cell) == int or type(cell) == float:
             return cell
-        return self.livingReward
+        
+        if self.reward_means is not None:
+            assert isinstance(action, str)
+            return np.random.normal(loc=self.reward_means[(state, action)], scale=0.1)
+        else:
+            return self.livingReward
 
     def getStartState(self):
         for x in range(self.grid.width):
             for y in range(self.grid.height):
                 if self.grid[x][y] == 'S':
+                    #print("Start state:",x,y)
                     return (x, y)
         raise 'Grid has no start state'
 
@@ -137,8 +169,19 @@ class Gridworld(mdp.MarkovDecisionProcess):
         from 'state' by taking 'action' along
         with their transition probabilities.
         """
+        
+        #print("Cur state: ", state)
+        #print("Action: ", action)
 
+        # convert tuples to strings...
+        if isinstance(action, tuple):
+            actions = ['south', 'north', 'west', 'east']
+            dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+            action = actions[dirs.index(action)]
+        #print("->", action)
+        
         if action not in self.getPossibleActions(state):
+            print(state, action, self.getPossibleActions(state))
             raise "Illegal action!"
 
         if self.isTerminal(state):
@@ -420,6 +463,169 @@ def getMazeGrid():
             ['S',' ',' ',' ']]
     return Gridworld(grid)
 
+import numpy as np
+from options import Option # Option(policyFn, terminationFn, initiationSet)
+def getRoomsGrid(safe=False, goal_loc=(9, 5), goal_reward=10, include_primitive=True):
+    grid = [['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#'], #  12
+            ['#', 'S', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', '#'], #  11
+            ['#', ' ', ' ', ' ', ' ', ' ',-100, ' ', ' ',-100,-100, ' ', '#'], #  10
+            ['#', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',-100, ' ', '#'], #  9
+            ['#', ' ', ' ', ' ', ' ', ' ',-100, ' ', ' ', ' ', ' ', ' ', '#'], #  8
+            ['#', ' ', ' ', ' ', ' ', ' ',-100, ' ', ' ', ' ', ' ', ' ', '#'], #  7
+            ['#', '#', ' ', '#',-100,-100,-100, ' ', ' ', ' ', ' ', ' ', '#'], #  6
+            ['#', ' ', ' ', ' ', ' ', ' ',-100,-100,-100, ' ',-100, '#', '#'], #  5
+            ['#', ' ', ' ', ' ', ' ', ' ',-100, ' ', ' ', ' ', ' ', ' ', '#'], #  4
+            ['#', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', '#'], #  3
+            ['#', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '#'], #  2
+            ['#', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', '#'], #  1
+            ['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#']] #  0
+            # 0    1    2    3    4    5    6    7    8    9    10   11   12
+    
+    grid[len(grid)-goal_loc[1]-1][goal_loc[0]] = goal_reward
+    
+    negative_terminals = []
+    for i in range(len(grid)):
+        for j in range(len(grid[i])):
+            if isinstance(grid[i][j], int): #grid[i][j] == -100:
+                if safe: # no negative terminal states
+                    grid[i][j] = '#'
+                else:
+                    negative_terminals.append((j, len(grid)-i-1))
+
+    pathfind_grid = np.flipud(np.array([[1 if c == '#' else 0 for c in row] for row in grid]))
+    
+    def getRoomStates(num):
+        if num == 1: xr, yr = (1, 7), (5+1, 11+1)
+        elif num == 2: xr, yr = (7, 6), (11+1, 11+1)
+        elif num == 3: xr, yr = (1, 1), (5+1, 5+1)
+        elif num == 4: xr, yr = (7, 1), (11+1, 4+1)
+        
+        coords = []
+        for x in range(xr[0], yr[0]):
+            for y in range(xr[1], yr[1]):
+                coords.append((x, y))
+        
+        #print(num, coords)
+        if goal_loc in coords:
+            coords.remove(goal_loc)
+        for nterm in negative_terminals:
+            if nterm in coords:
+                coords.remove(nterm)
+        return coords
+    
+    north_corridor = (6, 9)
+    south_corridor = (6, 2)
+    west_corridor = (2, 6)
+    east_corridor = (9, 5)
+    
+    all_states = getRoomStates(1) + getRoomStates(2) + getRoomStates(3) + getRoomStates(4) + [north_corridor, south_corridor, west_corridor, east_corridor] + [goal_loc] + negative_terminals
+    
+    def getMovementDelta(cur, target, pathfind_grid, h_first=True):
+        # try moving horizontally first.
+        #print("Target:", target, " and cur: ", cur)
+        
+        if h_first:
+            dx = cur[0] - target[0]
+            dx = -1*(bool(dx > 0) - bool(dx < 0))
+            dy = 0
+        
+            if dx == 0 or (cur[0]+dx, cur[1]+dy) not in all_states:
+                dx = 0
+                dy = cur[1] - target[1]
+                dy = -1*(bool(dy > 0) - bool(dy < 0))
+        else:
+            dy = cur[1] - target[1]
+            dy = -1*(bool(dy > 0) - bool(dy < 0))
+            dx = 0
+        
+            if dy == 0 or (cur[0]+dx, cur[1]+dy) not in all_states:
+                dy = 0
+                dx = cur[0] - target[0]
+                dx = -1*(bool(dx > 0) - bool(dx < 0))
+        
+        #print(cur, target, dx, dy, cur[0]+dx, cur[1]+dy)
+        assert (cur[0]+dx, cur[1]+dy) in all_states
+        
+        actions = ['south', 'north', 'west', 'east']
+        dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        
+        return actions[dirs.index((dx, dy))]
+    
+    options = []
+    
+    if include_primitive:
+        options += [Option(policyFn=lambda state: 'north',
+                            terminationFn=lambda state: True,
+                            initiationSet=all_states,
+                            primitive=True, primitiveName='north'),
+                    Option(policyFn=lambda state: 'south',
+                            terminationFn=lambda state: True,
+                            initiationSet=all_states,
+                            primitive=True, primitiveName='south'),
+                    Option(policyFn=lambda state: 'east',
+                            terminationFn=lambda state: True,
+                            initiationSet=all_states,
+                            primitive=True, primitiveName='east'),
+                    Option(policyFn=lambda state: 'west',
+                            terminationFn=lambda state: True,
+                            initiationSet=all_states,
+                            primitive=True, primitiveName='west')]
+    
+    options += [
+        Option(policyFn=lambda state: getMovementDelta(state, west_corridor, pathfind_grid), 
+                terminationFn=lambda state: not state in getRoomStates(1),
+                initiationSet=getRoomStates(1) + [north_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, north_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(1),
+                initiationSet=getRoomStates(1) + [west_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, north_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(2),
+                initiationSet=getRoomStates(2) + [east_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, east_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(2),
+                initiationSet=getRoomStates(2) + [north_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, west_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(3),
+                initiationSet=getRoomStates(3) + [south_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, south_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(3),
+                initiationSet=getRoomStates(3) + [west_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, east_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(4),
+                initiationSet=getRoomStates(4) + [south_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, south_corridor, pathfind_grid),
+                terminationFn=lambda state: not state in getRoomStates(4),
+                initiationSet=getRoomStates(4) + [east_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, west_corridor, pathfind_grid, h_first=False), 
+                terminationFn=lambda state: not state in getRoomStates(1),
+                initiationSet=getRoomStates(1) + [north_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, north_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(1),
+                initiationSet=getRoomStates(1) + [west_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, north_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(2),
+                initiationSet=getRoomStates(2) + [east_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, east_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(2),
+                initiationSet=getRoomStates(2) + [north_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, west_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(3),
+                initiationSet=getRoomStates(3) + [south_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, south_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(3),
+                initiationSet=getRoomStates(3) + [west_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, east_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(4),
+                initiationSet=getRoomStates(4) + [south_corridor]),
+        Option(policyFn=lambda state: getMovementDelta(state, south_corridor, pathfind_grid, h_first=False),
+                terminationFn=lambda state: not state in getRoomStates(4),
+                initiationSet=getRoomStates(4) + [east_corridor])
+        ]
+    return Gridworld(grid, options) #, reward_means=defaultdict(lambda: np.random.uniform(low=-1, high=0)))
+
+def getRoomsGridSafe():
+    return getRoomsGrid(safe=True, goal_loc=(11, 1), goal_reward=1, include_primitive=True)
+
 def getRandomGrid():
     # src: http://rosettacode.org/wiki/Maze_generation#Python
     w, h = 6, 6
@@ -566,7 +772,7 @@ def runEpisode(agent, environment, discount, decision, display, message, pause, 
     #message("BEGINNING EPISODE: "+str(episode)+"\n")
     
     timestep = 0
-    MAX_TIMESTEPS = 40
+    MAX_TIMESTEPS = 2000
     
     while True:
         #print("timestep ", timestep)
@@ -588,23 +794,24 @@ def runEpisode(agent, environment, discount, decision, display, message, pause, 
         # END IF IN A TERMINAL STATE
         actions = environment.getPossibleActions(state)
         if len(actions) == 0 or (bounded and timestep >= MAX_TIMESTEPS):
-            if update and len(actions) == 0: # reached terminal state but we are using n-step agent
-                agent.update(state, None, None, None, update) # keep going until n-step agent says stop
-                continue # for n-step agent
-            elif not update: # not n-step agent so terminate on goal state or time exceeded
+            if not agent.n_step or not update: # not n-step agent so terminate on goal state or time exceeded
                 message("EPISODE "+str(episode)+" COMPLETE: RETURN WAS "+str(returns)+"\n")
                 if 'stopEpisode' in dir(agent):
                     agent.stopEpisode()
                 return (timestep, returns)
+            elif update and len(actions) == 0: # reached terminal state but we are using n-step agent
+                agent.update(state, None, None, None, update) # keep going until n-step agent says stop
+                continue # for n-step agent
 
         # GET ACTION (USUALLY FROM AGENT)
         action = decision(state)
-        #print(action)
+        #print("Taking action:", action)
         if action == None:
             raise 'Error: Agent returned None action'
 
         # EXECUTE ACTION
         nextState, reward = environment.doAction(action)
+        #print("New state observed:", nextState)
         #message("Started in state: "+str(state)+
         #        "\nTook action: "+str(action)+
         #        "\nEnded in state: "+str(nextState)+
@@ -617,6 +824,7 @@ def runEpisode(agent, environment, discount, decision, display, message, pause, 
         totalDiscount *= discount
         
         timestep += 1
+        #input("")
 
     if 'stopEpisode' in dir(agent):
         agent.stopEpisode()
@@ -732,8 +940,11 @@ if __name__ == '__main__':
     # GET THE AGENT
     ###########################
 
-    #import valueIterationAgents, rtdp #, qlearningAgents
-    import sarsa_agents, tree_backup, q_sigma
+    #import valueIterationAgents, rtdp
+    import sarsa_agents, tree_backup, q_sigma, options
+    option_agents = ['smdpq', 'intraoptq', 'combooptq', 'combooptsarsa']
+    option_agent_classes = [options.SMDPQLearningAgent, options.OneStepIntraOptionQLearningAgent, options.SMDPIntraCombinedQLearningAgent, options.SMDPIntraCombinedSarsaAgent]
+    
     a = None
     if opts.agent == 'n_step_sarsa':
         a = sarsa_agents.NStepSarsaAgent(discount=opts.discount, alpha=opts.learningRate, epsilon=opts.epsilon, actionFn=lambda state: mdp.getPossibleActions(state), n=opts.stepn, terminalFn=lambda state: mdp.isTerminal(state))
@@ -758,7 +969,16 @@ if __name__ == '__main__':
                       'alpha': opts.learningRate,
                       'epsilon': opts.epsilon,
                       'actionFn': actionFn}
-        a = qlearningAgents.QLearningAgent(**qLearnOpts)
+        a = options.QLearningAgent(**qLearnOpts)
+    elif opts.agent in option_agents:
+        gridWorldEnv = GridworldEnvironment(mdp)
+        actionFn = lambda state: mdp.getPossibleActions(state)
+        qLearnOpts = {'gamma': opts.discount,
+                      'alpha': opts.learningRate,
+                      'epsilon': opts.epsilon,
+                      'actionFn': actionFn,
+                      'optionFn': lambda state: mdp.getPossibleOptions(state)}
+        a = option_agent_classes[option_agents.index(opts.agent)](mdp.options+mdp.getTerminalOption(), **qLearnOpts)
     elif opts.agent == 'random':
         # # No reason to use the random agent without episodes
         if opts.episodes == 0:
@@ -807,8 +1027,8 @@ if __name__ == '__main__':
         if opts.manual and opts.agent == None:
             displayCallback = lambda state: display.displayNullValues(state)
         else:
-            if opts.agent in ['random', 'value', 'valuegs', 'rtdp']: displayCallback = lambda state: display.displayValues(a, state, "CURRENT VALUES")
-            elif opts.agent in ['n_step_sarsa', 'n_step_expected_sarsa', 'tree_backup', 'qsigma']: displayCallback = lambda state: display.displayQValues(a, state, "CURRENT Q-VALUES")
+            if opts.agent in ['random', 'value', 'valuegs', 'rtdp', 'smdpq', 'combooptq', 'combooptsarsa']: displayCallback = lambda state: display.displayValues(a, state, "CURRENT VALUES")
+            elif opts.agent in ['n_step_sarsa', 'n_step_expected_sarsa', 'tree_backup', 'qsigma', 'q', 'intraoptq']: displayCallback = lambda state: display.displayQValues(a, state, "CURRENT Q-VALUES")
 
     messageCallback = lambda x: printString(x)
     if opts.quiet:
@@ -832,15 +1052,24 @@ if __name__ == '__main__':
         print
     returns = 0
     for episode in range(1, opts.episodes+1):
-        #timestep, ret = runEpisode(a, env, opts.discount, decisionCallback, displayCallback, messageCallback, pauseCallback, episode)
         timestep, ret = runEpisode(a, env, opts.discount, decisionCallback, None, messageCallback, pauseCallback, episode)
+        #timestep, ret = runEpisode(a, env, opts.discount, decisionCallback, None, messageCallback, pauseCallback, episode)
         returns += ret
         
-        #print("Getting return from greedy policy...")
+        #print("Getting value of greedy policy...")
         # now do a time-bounded episode without updating any state-values
-        #ret = runEpisode(a, env, opts.discount, decisionCallback, displayCallback, messageCallback, pauseCallback, episode, update=False, bounded=True)
-        #agent_name = opts.agent
-        #fileio.append((timestep, ret), "results/returns_learning_" + agent_name + "_" + str(opts.learningRate) + "_" + str(opts.epsilon) + "_" + str(opts.stepn) + "_" + str(opts.sigma))
+        
+        timesteps = []
+        rets = []
+        for i in range(10):
+            timestep, ret = runEpisode(a, env, opts.discount, decisionCallback, None, messageCallback, pauseCallback, episode, update=False, bounded=True)
+            timesteps.append(timestep)
+            rets.append(ret)
+            print(i, timestep)
+        avg_timestep = sum(timesteps) / len(timesteps)
+        avg_ret = sum(rets) / len(rets)
+        fileio.append(avg_timestep, "results_" + opts.agent)
+        fileio.append(avg_ret, "returns_" + opts.agent)
         
     if opts.episodes > 0:
         print
@@ -850,14 +1079,13 @@ if __name__ == '__main__':
     
     # now gather stats
     #print("Gathering stats...")
-    for episode in range(1, opts.post_eps+1):
-        timestep, ret = runEpisode(a, env, opts.discount, decisionCallback, None, messageCallback, pauseCallback, episode, update=False)
-        agent_name = opts.agent
-        fileio.append((timestep, ret), "results/returns_post_" + agent_name + "_" + str(opts.learningRate) + "_" + str(opts.epsilon) + "_" + str(opts.stepn) + "_" + str(opts.sigma))
+    #for episode in range(1, opts.post_eps+1):
+    #    timestep, ret = runEpisode(a, env, opts.discount, decisionCallback, None, messageCallback, pauseCallback, episode, update=False)
+    #    agent_name = opts.agent
+    #    fileio.append((timestep, ret), "results/returns_post_" + agent_name + "_" + str(opts.learningRate) + "_" + str(opts.epsilon) + "_" + str(opts.stepn) + "_" + str(opts.sigma))
 
-    '''
     # DISPLAY POST-LEARNING VALUES / Q-VALUES
-    if (opts.agent in ['q', 'n_step_sarsa', 'n_step_expected_sarsa', 'tree_backup', 'qsigma']) and not opts.manual:
+    if (opts.agent in ['q', 'n_step_sarsa', 'n_step_expected_sarsa', 'tree_backup', 'qsigma', 'smdpq', 'intraoptq', 'combooptq', 'combooptsarsa']) and not opts.manual:
         try:
             display.displayQValues(a, message = "Q-VALUES AFTER "+str(opts.episodes)+" EPISODES")
             display.pause()
@@ -867,4 +1095,3 @@ if __name__ == '__main__':
             input("")
         except KeyboardInterrupt:
             sys.exit(0)
-    '''
