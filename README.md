@@ -28,6 +28,6 @@ Third commit and onward contains changes made for this assignment.
 
 The reinforcement learning framework code was extended to support options.
 
-![](figs/g1/steps.png)
+![](results/g1/steps.png)
 
-![](figs/g2/returns.png)
+![](results/g2/returns.png)
