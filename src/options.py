@@ -67,6 +67,9 @@ class QLearningAgent(ReinforcementAgent):
     def startEpisode(self, initialState):
         super().startEpisode()
 
+global optionid
+optionid = 0
+
 class Option():
     def __init__(self, policyFn, terminationFn, initiationSet, primitive=False, primitiveName=None, target=None):
         self.getAction = policyFn
@@ -75,9 +78,13 @@ class Option():
         self.primitive = primitive
         self.primitiveName = primitiveName
         self.target = target
+        
+        global optionid
+        self.idnum = optionid
+        optionid += 1
     def __eq__(self, other):
         if isinstance(other, self.__class__):
-            return self.initiationSet == other.initiationSet
+            return self.idnum == other.idnum
         if isinstance(other, str):
             return self.primitiveName == other
         return False
